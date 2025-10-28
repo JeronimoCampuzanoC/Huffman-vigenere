@@ -1,0 +1,67 @@
+# Build artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.bin
+*.out
+*.ilk
+*.pdb
+*.exp
+*.idb
+*.ipch
+*.pch
+*.res
+*.sbr
+
+# CMake build directories
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Visual Studio files
+.vs/
+*.suo
+*.user
+*.ncb
+*.aps
+*.bsc
+*.scc
+*.vssscc
+*.vspscc
+ipch/
+Debug/
+Release/
+x64/
+Win32/
+
+# Eclipse files
+.project
+.cproject
+.settings/
+
+# Qt Creator files
+*.pro.user
+*.pro.user.*
+*.qrc_*.cpp
+*.qrc_*.h
+
+# Other common IDE/editor files
+.vscode/
+*.swp
+*~
+#*#
+
+# Log files
+*.log
+
+# Dependency directories (e.g., vcpkg)
+vcpkg_installed/
+
+# Custom build outputs or temporary files
+# Add any other specific files or directories you want to ignore here
