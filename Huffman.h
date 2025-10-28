@@ -14,6 +14,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 
 class Huffman
 {
@@ -27,6 +28,10 @@ public:
     // Destructor and default constructor are fine as the defaults.
     Huffman() = default;
     ~Huffman() = default;
+
+private:
+    // Helper method to generate Huffman codes
+    static void generateCodes(class NodeLetter *node, std::string code, std::map<char, std::string> &huffmanCodes);
 };
 
 #endif // HUFFMAN_H

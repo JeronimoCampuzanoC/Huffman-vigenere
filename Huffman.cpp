@@ -74,7 +74,35 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input)
     //generate a map that maps characters to their binary codes
     map<char, string> huffmanCodes;
     //generate codes
+    generateCodes(root, "", huffmanCodes);
     
+    //compress the input
+    string compressedString;
+    for (char c : input)
+    {
+        compressedString += huffmanCodes[c];
+    }
+    
+    //print codes 
+    for (const auto &code : huffmanCodes)
+    {
+        cout << code.first << " -> " << code.second << endl;
+    }
+    
+    // Convert string to vector<char> for return
+    vector<char> compressedInput(compressedString.begin(), compressedString.end());
+    return compressedInput;
+}
 
-    return input;
+void Huffman::generateCodes(NodeLetter *node, string code, map<char, string> &huffmanCodes)
+{
+    if (node->izq == nullptr && node->der == nullptr)
+    {
+        huffmanCodes[node->letra] = code;
+    }
+    else
+    {
+        generateCodes(node->izq, code + "0", huffmanCodes);
+        generateCodes(node->der, code + "1", huffmanCodes);
+    }
 }
