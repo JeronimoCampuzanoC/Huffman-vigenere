@@ -118,10 +118,7 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input)
     // Convert string to vector<char> for return
 
 
-    //delete memory from the tree recursively
-    deleteTree(root);
-
-
+    
 
 
     //Save frecuency tree for decompression
@@ -137,13 +134,16 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input)
         freqFile.write(reinterpret_cast<const char*>(&freq), sizeof(freq));
     }
 
-    // agrega padding y tamaño original para facilitar la decodificación
+    // add padding and original size for decompression
     uint8_t  pad = padding;
     uint32_t originalSize = static_cast<uint32_t>(input.size());
     freqFile.write(reinterpret_cast<const char*>(&pad),          sizeof(pad));
     freqFile.write(reinterpret_cast<const char*>(&originalSize), sizeof(originalSize));
 
     freqFile.close();
+
+    //delete memory from the tree recursively
+    deleteTree(root);
 
     return compressedInput;
     
@@ -155,7 +155,7 @@ void Huffman::generateCodes(NodeLetter *node, string code, map<char, string> &hu
 
     if (node->izq == nullptr && node->der == nullptr)
     {
-        huffmanCodes[node->letra] = code.empty() ? "0" : code; // <-- clave
+        huffmanCodes[node->letra] = code.empty() ? "0" : code; // if the code is empty, set it to "0"
         return;
     }
     generateCodes(node->izq, code + "0", huffmanCodes);
@@ -236,9 +236,9 @@ bool Huffman::loadFreqAndBuildTree(const string &path,
 }
 
 
-vector<char> Huffman::HuffmanDecompression(const std::vector<char> &compressed)
+vector<char> Huffman::HuffmanDecompression(const vector<char> &compressed)
 {
-    std::vector<std::pair<char, int>> freq;
+    vector<pair<char, int>> freq;
     uint8_t pad = 0;
     uint32_t originalSize = 0;
     NodeLetter *root = nullptr;
@@ -248,7 +248,7 @@ vector<char> Huffman::HuffmanDecompression(const std::vector<char> &compressed)
         return {};
     }
 
-    std::vector<char> output;
+    vector<char> output;
     output.reserve(originalSize);
 
     if (!root)
@@ -292,7 +292,7 @@ vector<char> Huffman::readUncompressedFile(const string &path)
         return {};
     }
     file.seekg(0, ios::end);
-    std::streampos end = file.tellg();
+    streampos end = file.tellg();
     if (end < 0)
     {
         return {};
@@ -302,21 +302,21 @@ vector<char> Huffman::readUncompressedFile(const string &path)
     vector<char> data(size);
     if (size > 0)
     {
-        file.read(data.data(), static_cast<std::streamsize>(size));
+        file.read(data.data(), static_cast<streamsize>(size));
     }
     return data;
 }
 
-bool Huffman::writeFile(const std::string &path, const std::vector<char> &data)
+bool Huffman::writeFile(const string &path, const vector<char> &data)
 {
-    std::ofstream out(path, std::ios::binary);
+    ofstream out(path, ios::binary);
     if (!out)
     {
         return false;
     }
     if (!data.empty())
     {
-        out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
+        out.write(reinterpret_cast<const char *>(data.data()), static_cast<streamsize>(data.size()));
     }
     return static_cast<bool>(out);
 }
