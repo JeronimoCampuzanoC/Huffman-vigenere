@@ -235,7 +235,7 @@ bool Huffman::loadFreqAndBuildTree(const string &path,
     return true;
 }
 
-
+// Decompression function that uses the frequency table to decompress the compressed file
 vector<char> Huffman::HuffmanDecompression(const vector<char> &compressed)
 {
     vector<pair<char, int>> freq;
