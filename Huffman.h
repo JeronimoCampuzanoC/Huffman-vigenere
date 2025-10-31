@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <cstdint>
 
 class Huffman
 {
@@ -25,6 +26,13 @@ public:
     // until a real compressor is implemented.
     static std::vector<char> HuffmanCompression(const std::vector<char> &input);
 
+    // Decompress a buffer produced by HuffmanCompression using freqTable.bin metadata
+    static std::vector<char> HuffmanDecompression(const std::vector<char> &compressed);
+
+    // Simple helper to read raw buffer from a file
+    static std::vector<char> readUncompressedFile(const std::string &path);
+    static bool writeFile(const std::string &path, const std::vector<char> &data);
+
     // Destructor and default constructor are fine as the defaults.
     Huffman() = default;
     ~Huffman() = default;
@@ -32,6 +40,15 @@ public:
 private:
     // Helper method to generate Huffman codes
     static void generateCodes(class NodeLetter *node, std::string code, std::map<char, std::string> &huffmanCodes);
+
+    // Helper to read freqTable.bin and rebuild the Huffman tree
+    static bool loadFreqAndBuildTree(const std::string &path,
+                                     std::vector<std::pair<char, int>> &freq,
+                                     uint8_t &pad,
+                                     uint32_t &originalSize,
+                                     class NodeLetter *&root);
+
+    // (no duplicate declarations)
 };
 
 #endif // HUFFMAN_H

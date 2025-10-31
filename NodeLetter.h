@@ -12,4 +12,11 @@ public:
     char letra;
 };
 
+void deleteTree(NodeLetter* node) {
+    if (!node) return;
+    deleteTree(node->izq);
+    deleteTree(node->der);
+    delete node;
+}
+
 #endif

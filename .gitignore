@@ -16,6 +16,7 @@
 *.pch
 *.res
 *.sbr
+*.txt
 
 # CMake build directories
 build/
