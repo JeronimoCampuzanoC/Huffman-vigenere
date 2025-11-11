@@ -27,8 +27,8 @@ namespace fs = std::filesystem;
 // Opcional: si tienes descompresión
 static std::vector<char> HuffmanDecompress(const std::vector<char> &data)
 {
-    // TODO: implementa la descompresión real
-    return data; // placeholder
+    // Use the real Huffman decompression from Huffman.cpp
+    return Huffman::HuffmanDecompression(data);
 }
 
 // ====== Utilidades de E/S binaria ======
