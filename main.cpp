@@ -2,8 +2,11 @@
 #include <filesystem>
 #include <vector>
 #include <string>
-#include <cstdio> // std::rename
+#include <cstdio>     // std::rename
+#include <unistd.h>   // para fork, exec
+#include <sys/wait.h> // para wait
 #include "Huffman.h"
+#include "Vigenere.h"
 
 namespace fs = std::filesystem;
 using namespace std;
@@ -209,20 +212,225 @@ void decompressMode(const fs::path &input)
 }
 
 // ============================================
+// FUNCIONES PARA ENCRIPTACIÓN (CON SYSTEM CALLS)
+// ============================================
+
+void encryptFile(const fs::path &file, const string &key)
+{
+    cout << "\n[+] Encriptando: " << file << endl;
+
+    // Leer archivo
+    vector<char> data = Huffman::readUncompressedFile(file.string());
+    if (data.empty())
+    {
+        cout << "   ERROR: No se pudo leer el archivo\n";
+        return;
+    }
+
+    // Crear proceso hijo usando fork
+    pid_t pid = fork();
+
+    if (pid < 0)
+    {
+        cout << "   ERROR: No se pudo crear proceso hijo\n";
+        return;
+    }
+    else if (pid == 0)
+    {
+        // Proceso HIJO: realizar encriptación
+        vector<char> encrypted = Vigenere::VigenereEncryption(data, key);
+
+        // Guardar archivo encriptado
+        fs::path outEnc = file.string() + ".enc";
+        Huffman::writeFile(outEnc.string(), encrypted);
+
+        // Terminar proceso hijo
+        exit(0);
+    }
+    else
+    {
+        // Proceso PADRE: esperar a que termine el hijo
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        {
+            fs::path outEnc = file.string() + ".enc";
+            cout << "   Encriptado → " << outEnc << endl;
+
+            // Mostrar estadísticas
+            long originalSize = data.size();
+            long encryptedSize = 0;
+            if (fs::exists(outEnc))
+            {
+                encryptedSize = fs::file_size(outEnc);
+            }
+
+            cout << "      Original:    " << originalSize << " bytes (" << (originalSize / 1024.0) << " KB)\n";
+            cout << "      Encriptado:  " << encryptedSize << " bytes (" << (encryptedSize / 1024.0) << " KB)\n";
+        }
+        else
+        {
+            cout << "   ERROR: Fallo en la encriptación\n";
+        }
+    }
+}
+
+void encryptMode(const fs::path &input, const string &key)
+{
+    cout << "\n=== MODO ENCRIPTACIÓN ===\n";
+
+    if (key.empty())
+    {
+        cout << "ERROR: Debe proporcionar una clave de encriptación\n";
+        return;
+    }
+
+    if (!fs::exists(input))
+    {
+        cout << "Ruta no existe.\n";
+        return;
+    }
+
+    if (fs::is_regular_file(input))
+    {
+        encryptFile(input, key);
+    }
+    else if (fs::is_directory(input))
+    {
+        for (auto &entry : fs::recursive_directory_iterator(input))
+        {
+            if (entry.is_regular_file())
+                encryptFile(entry.path(), key);
+        }
+    }
+
+    cout << "\nEncriptación finalizada.\n";
+}
+
+// ============================================
+// FUNCIONES PARA DESENCRIPTACIÓN (CON SYSTEM CALLS)
+// ============================================
+
+void decryptFile(const fs::path &file, const string &key)
+{
+    cout << "\n[+] Desencriptando: " << file << endl;
+
+    // Leer archivo encriptado
+    vector<char> encrypted = Huffman::readUncompressedFile(file.string());
+    if (encrypted.empty())
+    {
+        cout << "   ERROR: No se pudo leer el archivo\n";
+        return;
+    }
+
+    // Crear proceso hijo usando fork
+    pid_t pid = fork();
+
+    if (pid < 0)
+    {
+        cout << "   ERROR: No se pudo crear proceso hijo\n";
+        return;
+    }
+    else if (pid == 0)
+    {
+        // Proceso HIJO: realizar desencriptación
+        vector<char> decrypted = Vigenere::VigenereDecryption(encrypted, key);
+
+        // Guardar archivo desencriptado
+        fs::path outDec = file.string() + ".dec";
+        Huffman::writeFile(outDec.string(), decrypted);
+
+        // Terminar proceso hijo
+        exit(0);
+    }
+    else
+    {
+        // Proceso PADRE: esperar a que termine el hijo
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        {
+            fs::path outDec = file.string() + ".dec";
+            cout << "   Desencriptado → " << outDec << endl;
+
+            // Mostrar estadísticas
+            long encryptedSize = encrypted.size();
+            long decryptedSize = 0;
+            if (fs::exists(outDec))
+            {
+                decryptedSize = fs::file_size(outDec);
+            }
+
+            cout << "      Encriptado:    " << encryptedSize << " bytes (" << (encryptedSize / 1024.0) << " KB)\n";
+            cout << "      Desencriptado: " << decryptedSize << " bytes (" << (decryptedSize / 1024.0) << " KB)\n";
+        }
+        else
+        {
+            cout << "   ERROR: Fallo en la desencriptación\n";
+        }
+    }
+}
+
+void decryptMode(const fs::path &input, const string &key)
+{
+    cout << "\n=== MODO DESENCRIPTACIÓN ===\n";
+
+    if (key.empty())
+    {
+        cout << "ERROR: Debe proporcionar una clave de desencriptación\n";
+        return;
+    }
+
+    if (!fs::exists(input))
+    {
+        cout << "Ruta no existe.\n";
+        return;
+    }
+
+    if (fs::is_regular_file(input))
+    {
+        if (input.extension() == ".enc")
+        {
+            decryptFile(input, key);
+        }
+        else
+        {
+            cout << "El archivo debe tener extensión .enc\n";
+        }
+    }
+    else if (fs::is_directory(input))
+    {
+        for (auto &entry : fs::recursive_directory_iterator(input))
+        {
+            if (entry.is_regular_file() && entry.path().extension() == ".enc")
+                decryptFile(entry.path(), key);
+        }
+    }
+
+    cout << "\nDesencriptación finalizada.\n";
+}
+
+// ============================================
 // MAIN
 // ============================================
 
 void showUsage(const char *program)
 {
-    cout << "Uso: " << program << " <modo> <ruta>\n\n";
+    cout << "Uso: " << program << " <modo> <ruta> [clave]\n\n";
     cout << "Modos:\n";
     cout << "  -c, --compress    Comprimir archivos (PDF, TXT)\n";
-    cout << "  -d, --decompress  Descomprimir archivos .huf\n\n";
+    cout << "  -d, --decompress  Descomprimir archivos .huf\n";
+    cout << "  -e, --encrypt     Encriptar archivos (requiere clave)\n";
+    cout << "  -z, --decrypt     Desencriptar archivos .enc (requiere clave)\n\n";
     cout << "Ejemplos:\n";
     cout << "  " << program << " -c archivo.pdf\n";
     cout << "  " << program << " -c archivo.txt\n";
     cout << "  " << program << " -c carpeta/\n";
     cout << "  " << program << " -d archivo.pdf.huf\n";
+    cout << "  " << program << " -e archivo.txt miClave123\n";
+    cout << "  " << program << " -z archivo.txt.enc miClave123\n";
 }
 
 int main(int argc, char **argv)
@@ -235,6 +443,7 @@ int main(int argc, char **argv)
 
     string mode = argv[1];
     fs::path input = argv[2];
+    string key = (argc >= 4) ? argv[3] : "";
 
     if (mode == "-c" || mode == "--compress")
     {
@@ -243,6 +452,26 @@ int main(int argc, char **argv)
     else if (mode == "-d" || mode == "--decompress")
     {
         decompressMode(input);
+    }
+    else if (mode == "-e" || mode == "--encrypt")
+    {
+        if (key.empty())
+        {
+            cout << "ERROR: Debe proporcionar una clave para encriptar\n";
+            showUsage(argv[0]);
+            return 1;
+        }
+        encryptMode(input, key);
+    }
+    else if (mode == "-z" || mode == "--decrypt")
+    {
+        if (key.empty())
+        {
+            cout << "ERROR: Debe proporcionar una clave para desencriptar\n";
+            showUsage(argv[0]);
+            return 1;
+        }
+        decryptMode(input, key);
     }
     else
     {
