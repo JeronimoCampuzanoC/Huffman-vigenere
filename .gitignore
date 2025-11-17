@@ -67,3 +67,5 @@ vcpkg_installed/
 # Custom build outputs or temporary files
 # Add any other specific files or directories you want to ignore here
 *.huf
+
+test/

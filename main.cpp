@@ -5,11 +5,180 @@
 #include <cstdio>     // std::rename
 #include <unistd.h>   // para fork, exec
 #include <sys/wait.h> // para wait
+#include <pthread.h>  // para threads
+#include <mutex>      // para sincronización
 #include "Huffman.h"
 #include "Vigenere.h"
 
 namespace fs = std::filesystem;
 using namespace std;
+
+// Mutex global para sincronizar acceso a freqTable.bin
+pthread_mutex_t freqTableMutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Forward declarations
+bool isCompressibleFile(const fs::path &p);
+
+// Estructura para pasar datos a los threads
+struct ThreadData
+{
+    fs::path file;
+    string mode;
+    string key;
+    int threadId;
+    bool success;
+};
+
+// Función que ejecutará cada thread
+void *processFileThread(void *arg)
+{
+    ThreadData *data = static_cast<ThreadData *>(arg);
+
+    cout << "\n[Thread " << data->threadId << "] Procesando: " << data->file << endl;
+
+    try
+    {
+        if (data->mode == "-c" || data->mode == "--compress")
+        {
+            if (isCompressibleFile(data->file))
+            {
+                // Leer archivo
+                vector<char> fileData = Huffman::readUncompressedFile(data->file.string());
+                if (!fileData.empty())
+                {
+                    // Comprimir
+                    vector<char> compressed = Huffman::HuffmanCompression(fileData);
+
+                    // Guardar comprimido
+                    fs::path outHuf = data->file.string() + ".huf";
+                    Huffman::writeFile(outHuf.string(), compressed);
+
+                    // Renombrar freqTable.bin con nombre único para evitar conflictos entre threads
+                    fs::path freqSrc = "freqTable.bin";
+                    fs::path freqDest = data->file.string() + ".freq";
+
+                    // Esperar un momento para asegurar que el archivo se haya creado
+                    if (fs::exists(freqSrc))
+                    {
+                        // Usar un nombre temporal único basado en el threadId
+                        fs::path tempFreq = "freqTable_" + to_string(data->threadId) + ".bin";
+
+                        try
+                        {
+                            // Copiar a temporal primero para evitar conflictos
+                            fs::copy(freqSrc, tempFreq, fs::copy_options::overwrite_existing);
+                            // Luego renombrar el temporal al nombre final
+                            fs::rename(tempFreq, freqDest);
+                        }
+                        catch (const fs::filesystem_error &e)
+                        {
+                            // Si falla, intentar copiar directamente
+                            if (fs::exists(freqSrc))
+                            {
+                                fs::copy(freqSrc, freqDest, fs::copy_options::overwrite_existing);
+                            }
+                        }
+                    }
+
+                    cout << "[Thread " << data->threadId << "] Comprimido → " << outHuf << endl;
+                    data->success = true;
+                }
+            }
+        }
+        else if (data->mode == "-d" || data->mode == "--decompress")
+        {
+            if (data->file.extension() == ".huf")
+            {
+                // Buscar archivo .freq
+                fs::path freqFile = data->file.string() + ".freq";
+                if (!fs::exists(freqFile))
+                {
+                    string hufStr = data->file.string();
+                    if (hufStr.size() > 4 && hufStr.substr(hufStr.size() - 4) == ".huf")
+                    {
+                        string baseName = hufStr.substr(0, hufStr.size() - 4);
+                        freqFile = baseName + ".freq";
+                    }
+                }
+
+                if (fs::exists(freqFile))
+                {
+                    // Bloquear acceso a freqTable.bin para evitar conflictos entre threads
+                    pthread_mutex_lock(&freqTableMutex);
+
+                    try
+                    {
+                        // Copiar tabla de frecuencias al archivo que espera la función de descompresión
+                        fs::copy(freqFile, "freqTable.bin", fs::copy_options::overwrite_existing);
+
+                        // Leer y descomprimir
+                        auto compressed = Huffman::readUncompressedFile(data->file.string());
+                        if (!compressed.empty())
+                        {
+                            auto restored = Huffman::HuffmanDecompression(compressed);
+                            fs::path output = data->file.string() + ".restored";
+                            Huffman::writeFile(output.string(), restored);
+
+                            cout << "[Thread " << data->threadId << "] Descomprimido → " << output << endl;
+                            data->success = true;
+                        }
+
+                        // Limpiar freqTable.bin temporal
+                        if (fs::exists("freqTable.bin"))
+                            fs::remove("freqTable.bin");
+                    }
+                    catch (const exception &e)
+                    {
+                        cout << "[Thread " << data->threadId << "] ERROR en descompresión: " << e.what() << endl;
+                        data->success = false;
+                    }
+
+                    // Desbloquear mutex
+                    pthread_mutex_unlock(&freqTableMutex);
+                }
+                else
+                {
+                    cout << "[Thread " << data->threadId << "] ERROR: No se encontró " << freqFile << endl;
+                    data->success = false;
+                }
+            }
+        }
+        else if (data->mode == "-e" || data->mode == "--encrypt")
+        {
+            vector<char> fileData = Huffman::readUncompressedFile(data->file.string());
+            if (!fileData.empty())
+            {
+                vector<char> encrypted = Vigenere::VigenereEncryption(fileData, data->key);
+                fs::path outEnc = data->file.string() + ".enc";
+                Huffman::writeFile(outEnc.string(), encrypted);
+                cout << "[Thread " << data->threadId << "] Encriptado → " << outEnc << endl;
+                data->success = true;
+            }
+        }
+        else if (data->mode == "-z" || data->mode == "--decrypt")
+        {
+            if (data->file.extension() == ".enc")
+            {
+                vector<char> encrypted = Huffman::readUncompressedFile(data->file.string());
+                if (!encrypted.empty())
+                {
+                    vector<char> decrypted = Vigenere::VigenereDecryption(encrypted, data->key);
+                    fs::path outDec = data->file.string() + ".dec";
+                    Huffman::writeFile(outDec.string(), decrypted);
+                    cout << "[Thread " << data->threadId << "] Desencriptado → " << outDec << endl;
+                    data->success = true;
+                }
+            }
+        }
+    }
+    catch (const exception &e)
+    {
+        cout << "[Thread " << data->threadId << "] ERROR: " << e.what() << endl;
+        data->success = false;
+    }
+
+    pthread_exit(nullptr);
+}
 
 // ============================================
 // FUNCIONES PARA COMPRESIÓN
@@ -445,40 +614,142 @@ int main(int argc, char **argv)
     fs::path input = argv[2];
     string key = (argc >= 4) ? argv[3] : "";
 
-    if (mode == "-c" || mode == "--compress")
+    // Check if the path is a folder or a file
+    if (fs::exists(input))
     {
-        compressMode(input);
-    }
-    else if (mode == "-d" || mode == "--decompress")
-    {
-        decompressMode(input);
-    }
-    else if (mode == "-e" || mode == "--encrypt")
-    {
-        if (key.empty())
+        if (fs::is_regular_file(input))
         {
-            cout << "ERROR: Debe proporcionar una clave para encriptar\n";
-            showUsage(argv[0]);
-            return 1;
+            cout << "Procesando archivo: " << input << endl;
+            if (mode == "-c" || mode == "--compress")
+            {
+                compressMode(input);
+            }
+            else if (mode == "-d" || mode == "--decompress")
+            {
+                decompressMode(input);
+            }
+            else if (mode == "-e" || mode == "--encrypt")
+            {
+                if (key.empty())
+                {
+                    cout << "ERROR: Debe proporcionar una clave para encriptar\n";
+                    showUsage(argv[0]);
+                    return 1;
+                }
+                encryptMode(input, key);
+            }
+            else if (mode == "-z" || mode == "--decrypt")
+            {
+                if (key.empty())
+                {
+                    cout << "ERROR: Debe proporcionar una clave para desencriptar\n";
+                    showUsage(argv[0]);
+                    return 1;
+                }
+                decryptMode(input, key);
+            }
+            else
+            {
+                cout << "Modo no reconocido: " << mode << endl;
+                showUsage(argv[0]);
+                return 1;
+            }
         }
-        encryptMode(input, key);
-    }
-    else if (mode == "-z" || mode == "--decrypt")
-    {
-        if (key.empty())
+        else if (fs::is_directory(input))
         {
-            cout << "ERROR: Debe proporcionar una clave para desencriptar\n";
-            showUsage(argv[0]);
-            return 1;
+            cout << "Procesando directorio: " << input << endl;
+
+            // Recolectar todos los archivos en el directorio
+            vector<fs::path> files;
+            for (auto &entry : fs::recursive_directory_iterator(input))
+            {
+                if (entry.is_regular_file())
+                {
+                    // Filtrar archivos según el modo
+                    bool shouldProcess = false;
+
+                    if (mode == "-c" || mode == "--compress")
+                    {
+                        shouldProcess = isCompressibleFile(entry.path());
+                    }
+                    else if (mode == "-d" || mode == "--decompress")
+                    {
+                        shouldProcess = (entry.path().extension() == ".huf");
+                    }
+                    else if (mode == "-e" || mode == "--encrypt")
+                    {
+                        shouldProcess = true; // Encriptar todos los archivos
+                    }
+                    else if (mode == "-z" || mode == "--decrypt")
+                    {
+                        shouldProcess = (entry.path().extension() == ".enc");
+                    }
+
+                    if (shouldProcess)
+                    {
+                        files.push_back(entry.path());
+                    }
+                }
+            }
+
+            cout << "Total de archivos encontrados: " << files.size() << endl;
+
+            // Crear threads para procesar archivos concurrentemente
+            vector<pthread_t> threads;
+            vector<ThreadData> threadDataArray;
+
+            threads.resize(files.size());
+            threadDataArray.resize(files.size());
+
+            // Crear un thread para cada archivo
+            for (size_t i = 0; i < files.size(); i++)
+            {
+                threadDataArray[i].file = files[i];
+                threadDataArray[i].mode = mode;
+                threadDataArray[i].key = key;
+                threadDataArray[i].threadId = i + 1;
+                threadDataArray[i].success = false;
+
+                int result = pthread_create(&threads[i], nullptr, processFileThread, &threadDataArray[i]);
+
+                if (result != 0)
+                {
+                    cout << "ERROR: No se pudo crear thread para " << files[i] << endl;
+                }
+            }
+
+            // Esperar a que todos los threads terminen
+            cout << "\nEsperando a que terminen " << threads.size() << " threads..." << endl;
+
+            for (size_t i = 0; i < threads.size(); i++)
+            {
+                pthread_join(threads[i], nullptr);
+            }
+
+            // Contar resultados
+            int successCount = 0;
+            int failCount = 0;
+
+            for (const auto &data : threadDataArray)
+            {
+                if (data.success)
+                    successCount++;
+                else
+                    failCount++;
+            }
+
+            cout << "\nResultado: " << successCount << " exitosos, " << failCount << " fallidos" << endl;
+            cout << "Procesamiento de directorio finalizado.\n";
         }
-        decryptMode(input, key);
     }
     else
     {
-        cout << "Modo no reconocido: " << mode << endl;
-        showUsage(argv[0]);
+        cout << "ERROR: La ruta no existe: " << input << endl;
         return 1;
     }
+
+    // Destruir el mutex antes de salir
+    pthread_mutex_destroy(&freqTableMutex);
 
     return 0;
 }
