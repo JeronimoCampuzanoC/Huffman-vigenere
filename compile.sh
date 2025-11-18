@@ -1,0 +1,1 @@
+g++ -std=c++17 -O2 -pthread main.cpp Huffman.cpp Vigenere.cpp -o programa.out
