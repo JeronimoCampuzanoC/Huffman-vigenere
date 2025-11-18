@@ -2,10 +2,10 @@
 #include <filesystem>
 #include <vector>
 #include <string>
-#include <cstdio>     // std::rename
-#include <unistd.h>   // para fork, exec
-#include <sys/wait.h> // para wait
-#include <pthread.h>  // para threads
+#include <cstdio>     
+#include <unistd.h>   
+#include <sys/wait.h> 
+#include <pthread.h> 
 #include "Huffman.h"
 #include "Vigenere.h"
 
