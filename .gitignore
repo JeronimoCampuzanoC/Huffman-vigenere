@@ -69,3 +69,5 @@ vcpkg_installed/
 *.huf
 
 test/
+
+*.enc

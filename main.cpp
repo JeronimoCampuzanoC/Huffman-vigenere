@@ -15,6 +15,101 @@ using namespace std;
 // Forward declarations
 bool isCompressibleFile(const fs::path &p);
 
+// Funciones auxiliares para operaciones individuales en threads
+bool threadCompress(const fs::path &inputFile, fs::path &outputFile, int threadId)
+{
+    vector<char> fileData = Huffman::readUncompressedFile(inputFile.string());
+    if (fileData.empty())
+        return false;
+
+    // Generar nombre único para la tabla de frecuencias
+    fs::path freqDest = inputFile.string() + ".freq";
+    
+    // Comprimir usando tabla de frecuencias única
+    vector<char> compressed = Huffman::HuffmanCompression(fileData, freqDest.string());
+
+    // Guardar comprimido
+    outputFile = inputFile.string() + ".huf";
+    return Huffman::writeFile(outputFile.string(), compressed);
+}
+
+bool threadDecompress(const fs::path &inputFile, fs::path &outputFile, int threadId)
+{
+    // Buscar archivo .freq
+    fs::path freqFile = inputFile.string() + ".freq";
+    if (!fs::exists(freqFile))
+    {
+        string hufStr = inputFile.string();
+        if (hufStr.size() > 4 && hufStr.substr(hufStr.size() - 4) == ".huf")
+        {
+            string baseName = hufStr.substr(0, hufStr.size() - 4);
+            freqFile = baseName + ".freq";
+        }
+    }
+
+    if (!fs::exists(freqFile))
+    {
+        cout << "[Thread " << threadId << "] ERROR: No se encontró " << freqFile << endl;
+        return false;
+    }
+
+    // Leer y descomprimir
+    auto compressed = Huffman::readUncompressedFile(inputFile.string());
+    if (compressed.empty())
+        return false;
+
+    auto restored = Huffman::HuffmanDecompression(compressed, freqFile.string());
+    
+    // Si el archivo original era texto.txt.enc.huf (resultado de -ec), 
+    // al descomprimir debería dar texto.txt.enc para luego desencriptar
+    string inputStr = inputFile.string();
+    if (inputStr.size() > 4 && inputStr.substr(inputStr.size() - 4) == ".huf")
+    {
+        // Quitar .huf para obtener el nombre base (que puede terminar en .enc)
+        outputFile = inputStr.substr(0, inputStr.size() - 4);
+    }
+    else
+    {
+        outputFile = inputFile.string() + ".restored";
+    }
+    
+    return Huffman::writeFile(outputFile.string(), restored);
+}
+
+bool threadEncrypt(const fs::path &inputFile, fs::path &outputFile, const string &key, int threadId)
+{
+    vector<char> fileData = Huffman::readUncompressedFile(inputFile.string());
+    if (fileData.empty())
+        return false;
+
+    vector<char> encrypted = Vigenere::VigenereEncryption(fileData, key);
+    outputFile = inputFile.string() + ".enc";
+    return Huffman::writeFile(outputFile.string(), encrypted);
+}
+
+bool threadDecrypt(const fs::path &inputFile, fs::path &outputFile, const string &key, int threadId)
+{
+    vector<char> encrypted = Huffman::readUncompressedFile(inputFile.string());
+    if (encrypted.empty())
+        return false;
+
+    vector<char> decrypted = Vigenere::VigenereDecryption(encrypted, key);
+    
+    // Si el archivo termina en .enc, quitarlo para obtener el nombre original
+    string inputStr = inputFile.string();
+    if (inputStr.size() > 4 && inputStr.substr(inputStr.size() - 4) == ".enc")
+    {
+        // Quitar .enc para obtener el nombre original (ej: texto.txt.enc -> texto.txt)
+        outputFile = inputStr.substr(0, inputStr.size() - 4);
+    }
+    else
+    {
+        outputFile = inputFile.string() + ".dec";
+    }
+    
+    return Huffman::writeFile(outputFile.string(), decrypted);
+}
+
 // Estructura para pasar datos a los threads
 struct ThreadData
 {
@@ -23,6 +118,7 @@ struct ThreadData
     string key;
     int threadId;
     bool success;
+    vector<string> operations; // Para operaciones combinadas: {"c", "e"} para -ce
 };
 
 // Función que ejecutará cada thread
@@ -34,90 +130,120 @@ void *processFileThread(void *arg)
 
     try
     {
-        if (data->mode == "-c" || data->mode == "--compress")
+        // Si hay operaciones combinadas, ejecutarlas en secuencia
+        if (!data->operations.empty())
         {
-            if (isCompressibleFile(data->file))
-            {
-                // Leer archivo
-                vector<char> fileData = Huffman::readUncompressedFile(data->file.string());
-                if (!fileData.empty())
-                {
-                    // Generar nombre único para la tabla de frecuencias
-                    fs::path freqDest = data->file.string() + ".freq";
-                    
-                    // Comprimir usando tabla de frecuencias única
-                    vector<char> compressed = Huffman::HuffmanCompression(fileData, freqDest.string());
+            fs::path currentFile = data->file;
+            bool allSuccess = true;
 
-                    // Guardar comprimido
-                    fs::path outHuf = data->file.string() + ".huf";
-                    Huffman::writeFile(outHuf.string(), compressed);
-
-                    cout << "[Thread " << data->threadId << "] Comprimido → " << outHuf << endl;
-                    data->success = true;
-                }
-            }
-        }
-        else if (data->mode == "-d" || data->mode == "--decompress")
-        {
-            if (data->file.extension() == ".huf")
+            for (size_t i = 0; i < data->operations.size(); i++)
             {
-                // Buscar archivo .freq
-                fs::path freqFile = data->file.string() + ".freq";
-                if (!fs::exists(freqFile))
+                const string &op = data->operations[i];
+                fs::path outputFile;
+                bool success = false;
+
+                if (op == "c")
                 {
-                    string hufStr = data->file.string();
-                    if (hufStr.size() > 4 && hufStr.substr(hufStr.size() - 4) == ".huf")
+                    if (!isCompressibleFile(currentFile))
                     {
-                        string baseName = hufStr.substr(0, hufStr.size() - 4);
-                        freqFile = baseName + ".freq";
+                        cout << "[Thread " << data->threadId << "] Archivo no comprimible: " << currentFile << endl;
+                        allSuccess = false;
+                        break;
                     }
+                    success = threadCompress(currentFile, outputFile, data->threadId);
+                    if (success)
+                        cout << "[Thread " << data->threadId << "] Comprimido → " << outputFile << endl;
+                }
+                else if (op == "d")
+                {
+                    if (currentFile.extension() != ".huf")
+                    {
+                        cout << "[Thread " << data->threadId << "] ERROR: Se esperaba archivo .huf" << endl;
+                        allSuccess = false;
+                        break;
+                    }
+                    success = threadDecompress(currentFile, outputFile, data->threadId);
+                    if (success)
+                        cout << "[Thread " << data->threadId << "] Descomprimido → " << outputFile << endl;
+                }
+                else if (op == "e")
+                {
+                    success = threadEncrypt(currentFile, outputFile, data->key, data->threadId);
+                    if (success)
+                        cout << "[Thread " << data->threadId << "] Encriptado → " << outputFile << endl;
+                }
+                else if (op == "z")
+                {
+                    if (currentFile.extension() != ".enc")
+                    {
+                        cout << "[Thread " << data->threadId << "] ERROR: Se esperaba archivo .enc" << endl;
+                        allSuccess = false;
+                        break;
+                    }
+                    success = threadDecrypt(currentFile, outputFile, data->key, data->threadId);
+                    if (success)
+                        cout << "[Thread " << data->threadId << "] Desencriptado → " << outputFile << endl;
                 }
 
-                if (fs::exists(freqFile))
+                if (!success)
                 {
-                    // Leer y descomprimir usando la tabla de frecuencias directamente
-                    auto compressed = Huffman::readUncompressedFile(data->file.string());
-                    if (!compressed.empty())
-                    {
-                        auto restored = Huffman::HuffmanDecompression(compressed, freqFile.string());
-                        fs::path output = data->file.string() + ".restored";
-                        Huffman::writeFile(output.string(), restored);
+                    cout << "[Thread " << data->threadId << "] ERROR en operación: " << op << endl;
+                    allSuccess = false;
+                    break;
+                }
 
-                        cout << "[Thread " << data->threadId << "] Descomprimido → " << output << endl;
+                // El archivo de salida se convierte en entrada para la siguiente operación
+                currentFile = outputFile;
+            }
+
+            data->success = allSuccess;
+        }
+        else
+        {
+            // Operación simple (modo legacy)
+            if (data->mode == "-c" || data->mode == "--compress")
+            {
+                if (isCompressibleFile(data->file))
+                {
+                    fs::path outputFile;
+                    if (threadCompress(data->file, outputFile, data->threadId))
+                    {
+                        cout << "[Thread " << data->threadId << "] Comprimido → " << outputFile << endl;
                         data->success = true;
                     }
                 }
-                else
+            }
+            else if (data->mode == "-d" || data->mode == "--decompress")
+            {
+                if (data->file.extension() == ".huf")
                 {
-                    cout << "[Thread " << data->threadId << "] ERROR: No se encontró " << freqFile << endl;
-                    data->success = false;
+                    fs::path outputFile;
+                    if (threadDecompress(data->file, outputFile, data->threadId))
+                    {
+                        cout << "[Thread " << data->threadId << "] Descomprimido → " << outputFile << endl;
+                        data->success = true;
+                    }
                 }
             }
-        }
-        else if (data->mode == "-e" || data->mode == "--encrypt")
-        {
-            vector<char> fileData = Huffman::readUncompressedFile(data->file.string());
-            if (!fileData.empty())
+            else if (data->mode == "-e" || data->mode == "--encrypt")
             {
-                vector<char> encrypted = Vigenere::VigenereEncryption(fileData, data->key);
-                fs::path outEnc = data->file.string() + ".enc";
-                Huffman::writeFile(outEnc.string(), encrypted);
-                cout << "[Thread " << data->threadId << "] Encriptado → " << outEnc << endl;
-                data->success = true;
-            }
-        }
-        else if (data->mode == "-z" || data->mode == "--decrypt")
-        {
-            if (data->file.extension() == ".enc")
-            {
-                vector<char> encrypted = Huffman::readUncompressedFile(data->file.string());
-                if (!encrypted.empty())
+                fs::path outputFile;
+                if (threadEncrypt(data->file, outputFile, data->key, data->threadId))
                 {
-                    vector<char> decrypted = Vigenere::VigenereDecryption(encrypted, data->key);
-                    fs::path outDec = data->file.string() + ".dec";
-                    Huffman::writeFile(outDec.string(), decrypted);
-                    cout << "[Thread " << data->threadId << "] Desencriptado → " << outDec << endl;
+                    cout << "[Thread " << data->threadId << "] Encriptado → " << outputFile << endl;
                     data->success = true;
+                }
+            }
+            else if (data->mode == "-z" || data->mode == "--decrypt")
+            {
+                if (data->file.extension() == ".enc")
+                {
+                    fs::path outputFile;
+                    if (threadDecrypt(data->file, outputFile, data->key, data->threadId))
+                    {
+                        cout << "[Thread " << data->threadId << "] Desencriptado → " << outputFile << endl;
+                        data->success = true;
+                    }
                 }
             }
         }
@@ -135,12 +261,117 @@ void *processFileThread(void *arg)
 // FUNCIONES PARA COMPRESIÓN
 // ============================================
 
+// Función para parsear el modo y extraer operaciones
+vector<string> parseMode(const string &mode, bool &needsKey)
+{
+    vector<string> operations;
+    needsKey = false;
+
+    // Modos simples
+    if (mode == "-c" || mode == "--compress")
+    {
+        operations.push_back("c");
+    }
+    else if (mode == "-d" || mode == "--decompress")
+    {
+        operations.push_back("d");
+    }
+    else if (mode == "-e" || mode == "--encrypt")
+    {
+        operations.push_back("e");
+        needsKey = true;
+    }
+    else if (mode == "-z" || mode == "--decrypt")
+    {
+        operations.push_back("z");
+        needsKey = true;
+    }
+    // Modos combinados
+    else if (mode.length() >= 2 && mode[0] == '-')
+    {
+        // Parsear cada caracter después del '-'
+        for (size_t i = 1; i < mode.length(); i++)
+        {
+            char op = mode[i];
+            if (op == 'c' || op == 'd' || op == 'e' || op == 'z')
+            {
+                operations.push_back(string(1, op));
+                if (op == 'e' || op == 'z')
+                {
+                    needsKey = true;
+                }
+            }
+            else
+            {
+                // Caracter no válido
+                operations.clear();
+                return operations;
+            }
+        }
+    }
+
+    return operations;
+}
+
+// Validar que la combinación de operaciones sea válida
+bool validateOperations(const vector<string> &operations, string &errorMsg)
+{
+    if (operations.empty())
+        return false;
+
+    // Verificar combinaciones inválidas
+    for (size_t i = 0; i < operations.size() - 1; i++)
+    {
+        string current = operations[i];
+        string next = operations[i + 1];
+
+        // No se puede encriptar/desencriptar después de comprimir (datos binarios)
+        if (current == "c" && (next == "e" || next == "z"))
+        {
+            errorMsg = "ERROR: No se puede encriptar/desencriptar después de comprimir.\n"
+                      "       El cifrado Vigenere solo funciona con texto, no con datos binarios.\n"
+                      "       Use -ec (encriptar y luego comprimir) en lugar de -ce";
+            return false;
+        }
+
+        // No se puede comprimir/encriptar después de descomprimir (recuperación final)
+        if (current == "d" && (next == "c" || next == "e"))
+        {
+            errorMsg = "ERROR: No se puede comprimir/encriptar después de descomprimir.\n"
+                      "       La descompresión debe ser seguida de desencriptación (-dz) o ser final.";
+            return false;
+        }
+
+        // Descomprimir y luego desencriptar es válido (orden inverso de -ec)
+        if (current == "d" && next == "z")
+        {
+            // Válido: -dz es el inverso de -ec
+        }
+
+        // No se puede encriptar después de encriptar (duplicación innecesaria)
+        if (current == "e" && next == "e")
+        {
+            errorMsg = "ERROR: No se puede encriptar dos veces consecutivas.";
+            return false;
+        }
+
+        // No se puede comprimir después de comprimir
+        if (current == "c" && next == "c")
+        {
+            errorMsg = "ERROR: No se puede comprimir dos veces consecutivas.";
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool isCompressibleFile(const fs::path &p)
 {
     string e = p.extension().string();
     for (auto &c : e)
         c = tolower(c);
-    return e == ".pdf" || e == ".txt";
+    return e == ".pdf" || e == ".txt" || e == ".enc";
 }
 
 void processFile(const fs::path &file)
@@ -533,6 +764,13 @@ void showUsage(const char *program)
     cout << "  -d, --decompress  Descomprimir archivos .huf\n";
     cout << "  -e, --encrypt     Encriptar archivos (requiere clave)\n";
     cout << "  -z, --decrypt     Desencriptar archivos .enc (requiere clave)\n\n";
+    cout << "Modos combinados:\n";
+    cout << "  -ec               Encriptar y luego comprimir (requiere clave) ✓\n";
+    cout << "  -dz               Descomprimir y luego desencriptar (requiere clave) ✓\n";
+    cout << "\n";
+    cout << "  Nota: No use -ce (comprimir y encriptar) ya que el cifrado Vigenere\n";
+    cout << "        solo funciona con texto. Use -ec en su lugar.\n";
+    cout << "        Para revertir -ec, use -dz (no -zd).\n\n";
     cout << "Ejemplos:\n";
     cout << "  " << program << " -c archivo.pdf\n";
     cout << "  " << program << " -c archivo.txt\n";
@@ -540,6 +778,8 @@ void showUsage(const char *program)
     cout << "  " << program << " -d archivo.pdf.huf\n";
     cout << "  " << program << " -e archivo.txt miClave123\n";
     cout << "  " << program << " -z archivo.txt.enc miClave123\n";
+    cout << "  " << program << " -ec archivo.txt miClave123  (encripta y comprime)\n";
+    cout << "  " << program << " -dz archivo.txt.huf miClave123  (descomprime y desencripta)\n";
 }
 
 int main(int argc, char **argv)
@@ -554,44 +794,59 @@ int main(int argc, char **argv)
     fs::path input = argv[2];
     string key = (argc >= 4) ? argv[3] : "";
 
+    // Parsear el modo para obtener las operaciones
+    bool needsKey = false;
+    vector<string> operations = parseMode(mode, needsKey);
+
+    if (operations.empty())
+    {
+        cout << "ERROR: Modo no reconocido: " << mode << endl;
+        showUsage(argv[0]);
+        return 1;
+    }
+
+    // Validar que la combinación de operaciones sea válida
+    string validationError;
+    if (!validateOperations(operations, validationError))
+    {
+        cout << validationError << endl;
+        cout << "\nCombinaciones válidas:\n";
+        cout << "  -ec   : Encriptar y luego comprimir\n";
+        cout << "  -dz   : Descomprimir y luego desencriptar (inverso de -ec)\n";
+        cout << "  -e -c : Encriptar y comprimir (dos pasos separados)\n";
+        showUsage(argv[0]);
+        return 1;
+    }
+
+    if (needsKey && key.empty())
+    {
+        cout << "ERROR: Este modo requiere una clave de encriptación/desencriptación\n";
+        showUsage(argv[0]);
+        return 1;
+    }
+
     // Check if the path is a folder or a file
     if (fs::exists(input))
     {
         if (fs::is_regular_file(input))
         {
             cout << "Procesando archivo: " << input << endl;
-            if (mode == "-c" || mode == "--compress")
+            
+            // Crear thread data
+            ThreadData data;
+            data.file = input;
+            data.mode = mode;
+            data.key = key;
+            data.threadId = 1;
+            data.success = false;
+            data.operations = operations;
+
+            // Procesar en el hilo principal (sin crear thread adicional para un solo archivo)
+            processFileThread(&data);
+
+            if (!data.success)
             {
-                compressMode(input);
-            }
-            else if (mode == "-d" || mode == "--decompress")
-            {
-                decompressMode(input);
-            }
-            else if (mode == "-e" || mode == "--encrypt")
-            {
-                if (key.empty())
-                {
-                    cout << "ERROR: Debe proporcionar una clave para encriptar\n";
-                    showUsage(argv[0]);
-                    return 1;
-                }
-                encryptMode(input, key);
-            }
-            else if (mode == "-z" || mode == "--decrypt")
-            {
-                if (key.empty())
-                {
-                    cout << "ERROR: Debe proporcionar una clave para desencriptar\n";
-                    showUsage(argv[0]);
-                    return 1;
-                }
-                decryptMode(input, key);
-            }
-            else
-            {
-                cout << "Modo no reconocido: " << mode << endl;
-                showUsage(argv[0]);
+                cout << "ERROR: Falló el procesamiento del archivo\n";
                 return 1;
             }
         }
@@ -605,22 +860,23 @@ int main(int argc, char **argv)
             {
                 if (entry.is_regular_file())
                 {
-                    // Filtrar archivos según el modo
+                    // Filtrar archivos según la primera operación
                     bool shouldProcess = false;
+                    string firstOp = operations[0];
 
-                    if (mode == "-c" || mode == "--compress")
+                    if (firstOp == "c")
                     {
                         shouldProcess = isCompressibleFile(entry.path());
                     }
-                    else if (mode == "-d" || mode == "--decompress")
+                    else if (firstOp == "d")
                     {
                         shouldProcess = (entry.path().extension() == ".huf");
                     }
-                    else if (mode == "-e" || mode == "--encrypt")
+                    else if (firstOp == "e")
                     {
                         shouldProcess = true; // Encriptar todos los archivos
                     }
-                    else if (mode == "-z" || mode == "--decrypt")
+                    else if (firstOp == "z")
                     {
                         shouldProcess = (entry.path().extension() == ".enc");
                     }
@@ -649,6 +905,7 @@ int main(int argc, char **argv)
                 threadDataArray[i].key = key;
                 threadDataArray[i].threadId = i + 1;
                 threadDataArray[i].success = false;
+                threadDataArray[i].operations = operations;
 
                 int result = pthread_create(&threads[i], nullptr, processFileThread, &threadDataArray[i]);
 
