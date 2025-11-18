@@ -24,10 +24,12 @@ public:
     // Input: buffer with file contents.
     // Output: buffer with compressed data. Current implementation may be a passthrough
     // until a real compressor is implemented.
-    static std::vector<char> HuffmanCompression(const std::vector<char> &input);
+    // freqTablePath: optional path for the frequency table file (default: "freqTable.bin")
+    static std::vector<char> HuffmanCompression(const std::vector<char> &input, const std::string &freqTablePath = "freqTable.bin");
 
     // Decompress a buffer produced by HuffmanCompression using freqTable.bin metadata
-    static std::vector<char> HuffmanDecompression(const std::vector<char> &compressed);
+    // freqTablePath: optional path for the frequency table file (default: "freqTable.bin")
+    static std::vector<char> HuffmanDecompression(const std::vector<char> &compressed, const std::string &freqTablePath = "freqTable.bin");
 
     // Simple helper to read raw buffer from a file
     static std::vector<char> readUncompressedFile(const std::string &path);

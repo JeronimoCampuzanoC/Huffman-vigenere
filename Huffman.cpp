@@ -8,8 +8,7 @@
 #include <cstdint>
 using namespace std;
 
-
-std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input)
+std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input, const std::string &freqTablePath)
 {
     // Minimal stub for integration: compute frequencies (example) and
     // return the input as-is. Replace this with a real Huffman encoder.
@@ -122,7 +121,7 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input)
 
 
     //Save frecuency tree for decompression
-    ofstream freqFile("freqTable.bin", ios::binary);
+    ofstream freqFile(freqTablePath, ios::binary);
 
     uint16_t symbolCount = static_cast<uint16_t>(frequency.size());
     freqFile.write(reinterpret_cast<const char*>(&symbolCount), sizeof(symbolCount));
@@ -236,14 +235,14 @@ bool Huffman::loadFreqAndBuildTree(const string &path,
 }
 
 // Decompression function that uses the frequency table to decompress the compressed file
-vector<char> Huffman::HuffmanDecompression(const vector<char> &compressed)
+vector<char> Huffman::HuffmanDecompression(const vector<char> &compressed, const string &freqTablePath)
 {
     vector<pair<char, int>> freq;
     uint8_t pad = 0;
     uint32_t originalSize = 0;
     NodeLetter *root = nullptr;
 
-    if (!loadFreqAndBuildTree("freqTable.bin", freq, pad, originalSize, root))
+    if (!loadFreqAndBuildTree(freqTablePath, freq, pad, originalSize, root))
     {
         return {};
     }

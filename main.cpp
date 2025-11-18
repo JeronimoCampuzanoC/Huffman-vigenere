@@ -6,15 +6,11 @@
 #include <unistd.h>   // para fork, exec
 #include <sys/wait.h> // para wait
 #include <pthread.h>  // para threads
-#include <mutex>      // para sincronización
 #include "Huffman.h"
 #include "Vigenere.h"
 
 namespace fs = std::filesystem;
 using namespace std;
-
-// Mutex global para sincronizar acceso a freqTable.bin
-pthread_mutex_t freqTableMutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Forward declarations
 bool isCompressibleFile(const fs::path &p);
@@ -46,39 +42,15 @@ void *processFileThread(void *arg)
                 vector<char> fileData = Huffman::readUncompressedFile(data->file.string());
                 if (!fileData.empty())
                 {
-                    // Comprimir
-                    vector<char> compressed = Huffman::HuffmanCompression(fileData);
+                    // Generar nombre único para la tabla de frecuencias
+                    fs::path freqDest = data->file.string() + ".freq";
+                    
+                    // Comprimir usando tabla de frecuencias única
+                    vector<char> compressed = Huffman::HuffmanCompression(fileData, freqDest.string());
 
                     // Guardar comprimido
                     fs::path outHuf = data->file.string() + ".huf";
                     Huffman::writeFile(outHuf.string(), compressed);
-
-                    // Renombrar freqTable.bin con nombre único para evitar conflictos entre threads
-                    fs::path freqSrc = "freqTable.bin";
-                    fs::path freqDest = data->file.string() + ".freq";
-
-                    // Esperar un momento para asegurar que el archivo se haya creado
-                    if (fs::exists(freqSrc))
-                    {
-                        // Usar un nombre temporal único basado en el threadId
-                        fs::path tempFreq = "freqTable_" + to_string(data->threadId) + ".bin";
-
-                        try
-                        {
-                            // Copiar a temporal primero para evitar conflictos
-                            fs::copy(freqSrc, tempFreq, fs::copy_options::overwrite_existing);
-                            // Luego renombrar el temporal al nombre final
-                            fs::rename(tempFreq, freqDest);
-                        }
-                        catch (const fs::filesystem_error &e)
-                        {
-                            // Si falla, intentar copiar directamente
-                            if (fs::exists(freqSrc))
-                            {
-                                fs::copy(freqSrc, freqDest, fs::copy_options::overwrite_existing);
-                            }
-                        }
-                    }
 
                     cout << "[Thread " << data->threadId << "] Comprimido → " << outHuf << endl;
                     data->success = true;
@@ -103,38 +75,17 @@ void *processFileThread(void *arg)
 
                 if (fs::exists(freqFile))
                 {
-                    // Bloquear acceso a freqTable.bin para evitar conflictos entre threads
-                    pthread_mutex_lock(&freqTableMutex);
-
-                    try
+                    // Leer y descomprimir usando la tabla de frecuencias directamente
+                    auto compressed = Huffman::readUncompressedFile(data->file.string());
+                    if (!compressed.empty())
                     {
-                        // Copiar tabla de frecuencias al archivo que espera la función de descompresión
-                        fs::copy(freqFile, "freqTable.bin", fs::copy_options::overwrite_existing);
+                        auto restored = Huffman::HuffmanDecompression(compressed, freqFile.string());
+                        fs::path output = data->file.string() + ".restored";
+                        Huffman::writeFile(output.string(), restored);
 
-                        // Leer y descomprimir
-                        auto compressed = Huffman::readUncompressedFile(data->file.string());
-                        if (!compressed.empty())
-                        {
-                            auto restored = Huffman::HuffmanDecompression(compressed);
-                            fs::path output = data->file.string() + ".restored";
-                            Huffman::writeFile(output.string(), restored);
-
-                            cout << "[Thread " << data->threadId << "] Descomprimido → " << output << endl;
-                            data->success = true;
-                        }
-
-                        // Limpiar freqTable.bin temporal
-                        if (fs::exists("freqTable.bin"))
-                            fs::remove("freqTable.bin");
+                        cout << "[Thread " << data->threadId << "] Descomprimido → " << output << endl;
+                        data->success = true;
                     }
-                    catch (const exception &e)
-                    {
-                        cout << "[Thread " << data->threadId << "] ERROR en descompresión: " << e.what() << endl;
-                        data->success = false;
-                    }
-
-                    // Desbloquear mutex
-                    pthread_mutex_unlock(&freqTableMutex);
                 }
                 else
                 {
@@ -206,30 +157,28 @@ void processFile(const fs::path &file)
 
     long originalSize = data.size();
 
-    // 2. Comprimir → esto genera freqTable.bin
-    vector<char> compressed = Huffman::HuffmanCompression(data);
+    // 2. Generar nombre único para la tabla de frecuencias
+    fs::path freqDest = file.string() + ".freq";
 
-    // 3. Guardar el comprimido
+    // 3. Comprimir → esto genera la tabla de frecuencias con nombre específico
+    vector<char> compressed = Huffman::HuffmanCompression(data, freqDest.string());
+
+    // 4. Guardar el comprimido
     fs::path outHuf = file.string() + ".huf";
     Huffman::writeFile(outHuf.string(), compressed);
     cout << "   Comprimido → " << outHuf << endl;
 
-    // 4. Renombrar freqTable.bin para guardarla con nombre único
-    fs::path freqSrc = "freqTable.bin";
-    fs::path freqDest = file.string() + ".freq";
-
     long compressedSize = 0;
     long freqSize = 0;
 
-    if (fs::exists(freqSrc))
+    if (fs::exists(freqDest))
     {
-        freqSize = fs::file_size(freqSrc);
-        fs::rename(freqSrc, freqDest);
-        // Ocultar archivo .freq (sin mostrar en salida)
+        freqSize = fs::file_size(freqDest);
+        // Tabla de frecuencias ya creada con el nombre correcto
     }
     else
     {
-        cout << "   ADVERTENCIA: no se encontró freqTable.bin\n";
+        cout << "   ADVERTENCIA: no se encontró la tabla de frecuencias\n";
     }
 
     if (fs::exists(outHuf))
@@ -308,9 +257,6 @@ void decompressFile(const fs::path &hufFile)
         return;
     }
 
-    // Restaurar freqTable.bin (lo requiere la función)
-    fs::copy(freqFile, "freqTable.bin", fs::copy_options::overwrite_existing);
-
     // Leer comprimido
     auto compressed = Huffman::readUncompressedFile(hufFile.string());
     if (compressed.empty())
@@ -319,8 +265,8 @@ void decompressFile(const fs::path &hufFile)
         return;
     }
 
-    // Descomprimir
-    auto restored = Huffman::HuffmanDecompression(compressed);
+    // Descomprimir usando la tabla de frecuencias directamente
+    auto restored = Huffman::HuffmanDecompression(compressed, freqFile.string());
 
     // Guardar resultado
     fs::path output = hufFile.string() + ".restored";
@@ -339,12 +285,6 @@ void decompressFile(const fs::path &hufFile)
 
     cout << "      Restaurado:  " << restoredSize << " bytes (" << (restoredSize / 1024.0) << " KB)\n";
     cout << "      Ratio:       " << ratio << "% (expansión)\n";
-
-    // Limpiar freqTable.bin temporal
-    if (fs::exists("freqTable.bin"))
-    {
-        fs::remove("freqTable.bin");
-    }
 }
 
 void decompressMode(const fs::path &input)
@@ -747,9 +687,6 @@ int main(int argc, char **argv)
         cout << "ERROR: La ruta no existe: " << input << endl;
         return 1;
     }
-
-    // Destruir el mutex antes de salir
-    pthread_mutex_destroy(&freqTableMutex);
 
     return 0;
 }
