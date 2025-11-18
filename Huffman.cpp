@@ -4,8 +4,11 @@
 #include <algorithm>
 #include <utility>
 #include <iostream>
-#include <fstream>
 #include <cstdint>
+// System calls POSIX para gestión de archivos
+#include <fcntl.h>    // open()
+#include <unistd.h>   // read(), write(), close()
+#include <sys/stat.h> // fstat()
 using namespace std;
 
 std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input, const std::string &freqTablePath)
@@ -70,15 +73,15 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input, co
                 cout << "  Right Child ID: " << node->der->id << ", Char: " << node->der->letra << endl;
         }
         */
-    } 
-    //build the Huffman tree by merging the two nodes with the lowest frequency
+    }
+    // build the Huffman tree by merging the two nodes with the lowest frequency
     while (nodes.size() > 1);
     // root of the built Huffman tree
     NodeLetter *root = nodes.empty() ? nullptr : nodes[0];
     map<char, string> huffmanCodes;
     generateCodes(root, "", huffmanCodes);
-    
-    //compress the input
+
+    // compress the input
     string bitString;
     for (char c : input)
     {
@@ -98,17 +101,18 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input, co
             bitCount = 0;
         }
     }
-    //calculate padding with bits that are left
+    // calculate padding with bits that are left
     uint8_t padding = (bitCount == 0) ? 0 : (uint8_t)(8 - bitCount);
 
-    //if there are left bits, run to the left and write the last byte
-    if (bitCount > 0){
+    // if there are left bits, run to the left and write the last byte
+    if (bitCount > 0)
+    {
         currentByte <<= (8 - bitCount);
         compressedInput.push_back(currentByte);
     }
 
     /*
-    //print codes 
+    //print codes
     for (const auto &code : huffmanCodes)
     {
         cout << code.first << " -> " << code.second << endl;
@@ -116,41 +120,44 @@ std::vector<char> Huffman::HuffmanCompression(const std::vector<char> &input, co
     */
     // Convert string to vector<char> for return
 
-
-    
-
-
-    //Save frecuency tree for decompression
-    ofstream freqFile(freqTablePath, ios::binary);
+    // Save frecuency tree for decompression usando system calls POSIX
+    int fd = open(freqTablePath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+    {
+        // Error al abrir archivo
+        deleteTree(root);
+        return compressedInput;
+    }
 
     uint16_t symbolCount = static_cast<uint16_t>(frequency.size());
-    freqFile.write(reinterpret_cast<const char*>(&symbolCount), sizeof(symbolCount));
+    write(fd, &symbolCount, sizeof(symbolCount));
 
-    for (auto& p : frequency) {
+    for (auto &p : frequency)
+    {
         char sym = p.first;
         int32_t freq = p.second;
-        freqFile.write(reinterpret_cast<const char*>(&sym),  sizeof(sym));
-        freqFile.write(reinterpret_cast<const char*>(&freq), sizeof(freq));
+        write(fd, &sym, sizeof(sym));
+        write(fd, &freq, sizeof(freq));
     }
 
     // add padding and original size for decompression
-    uint8_t  pad = padding;
+    uint8_t pad = padding;
     uint32_t originalSize = static_cast<uint32_t>(input.size());
-    freqFile.write(reinterpret_cast<const char*>(&pad),          sizeof(pad));
-    freqFile.write(reinterpret_cast<const char*>(&originalSize), sizeof(originalSize));
+    write(fd, &pad, sizeof(pad));
+    write(fd, &originalSize, sizeof(originalSize));
 
-    freqFile.close();
+    close(fd);
 
-    //delete memory from the tree recursively
+    // delete memory from the tree recursively
     deleteTree(root);
 
     return compressedInput;
-    
 }
 
 void Huffman::generateCodes(NodeLetter *node, string code, map<char, string> &huffmanCodes)
 {
-    if (!node) return;
+    if (!node)
+        return;
 
     if (node->izq == nullptr && node->der == nullptr)
     {
@@ -161,23 +168,23 @@ void Huffman::generateCodes(NodeLetter *node, string code, map<char, string> &hu
     generateCodes(node->der, code + "1", huffmanCodes);
 }
 
-
 bool Huffman::loadFreqAndBuildTree(const string &path,
                                    vector<pair<char, int>> &freq,
                                    uint8_t &pad,
                                    uint32_t &originalSize,
                                    NodeLetter *&root)
 {
-    ifstream f(path, ios::binary);
-    if (!f)
+    // Usar system call open() en lugar de ifstream
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0)
     {
         return false;
     }
 
     uint16_t symbolCount = 0;
-    f.read(reinterpret_cast<char *>(&symbolCount), sizeof(symbolCount));
-    if (!f)
+    if (read(fd, &symbolCount, sizeof(symbolCount)) != sizeof(symbolCount))
     {
+        close(fd);
         return false;
     }
 
@@ -187,21 +194,23 @@ bool Huffman::loadFreqAndBuildTree(const string &path,
     {
         char sym;
         int32_t fr;
-        f.read(reinterpret_cast<char *>(&sym), sizeof(sym));
-        f.read(reinterpret_cast<char *>(&fr), sizeof(fr));
-        if (!f)
+        if (read(fd, &sym, sizeof(sym)) != sizeof(sym) ||
+            read(fd, &fr, sizeof(fr)) != sizeof(fr))
         {
+            close(fd);
             return false;
         }
         freq.push_back({sym, static_cast<int>(fr)});
     }
 
-    f.read(reinterpret_cast<char *>(&pad), sizeof(pad));
-    f.read(reinterpret_cast<char *>(&originalSize), sizeof(originalSize));
-    if (!f)
+    if (read(fd, &pad, sizeof(pad)) != sizeof(pad) ||
+        read(fd, &originalSize, sizeof(originalSize)) != sizeof(originalSize))
     {
+        close(fd);
         return false;
     }
+
+    close(fd);
 
     // Build Huffman tree using the same strategy as compression (sort by frequency ascending)
     vector<NodeLetter *> nodes;
@@ -220,7 +229,7 @@ bool Huffman::loadFreqAndBuildTree(const string &path,
     while (nodes.size() > 1)
     {
         sort(nodes.begin(), nodes.end(), [](NodeLetter *a, NodeLetter *b)
-                  { return a->id < b->id; });
+             { return a->id < b->id; });
         NodeLetter *left = nodes[0];
         NodeLetter *right = nodes[1];
         NodeLetter *parent = new NodeLetter(left->id + right->id, '\0');
@@ -282,41 +291,62 @@ vector<char> Huffman::HuffmanDecompression(const vector<char> &compressed, const
     return output;
 }
 
-//function to read the uncompressed file
+// function to read the uncompressed file usando system calls POSIX
 vector<char> Huffman::readUncompressedFile(const string &path)
 {
-    ifstream file(path, ios::binary);
-    if (!file)
+    // Usar open() en lugar de ifstream
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0)
     {
         return {};
     }
-    file.seekg(0, ios::end);
-    streampos end = file.tellg();
-    if (end < 0)
+
+    // Obtener tamaño del archivo con fstat()
+    struct stat st;
+    if (fstat(fd, &st) < 0)
     {
+        close(fd);
         return {};
     }
-    size_t size = static_cast<size_t>(end);
-    file.seekg(0, ios::beg);
+
+    size_t size = static_cast<size_t>(st.st_size);
     vector<char> data(size);
+
+    // Leer el archivo con read()
     if (size > 0)
     {
-        file.read(data.data(), static_cast<streamsize>(size));
+        ssize_t bytesRead = read(fd, data.data(), size);
+        if (bytesRead < 0)
+        {
+            close(fd);
+            return {};
+        }
     }
+
+    close(fd);
     return data;
 }
 
 bool Huffman::writeFile(const string &path, const vector<char> &data)
 {
-    ofstream out(path, ios::binary);
-    if (!out)
+    // Usar open() con flags de escritura en lugar de ofstream
+    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
     {
         return false;
     }
+
+    // Escribir datos con write()
     if (!data.empty())
     {
-        out.write(reinterpret_cast<const char *>(data.data()), static_cast<streamsize>(data.size()));
+        ssize_t bytesWritten = write(fd, data.data(), data.size());
+        if (bytesWritten < 0 || static_cast<size_t>(bytesWritten) != data.size())
+        {
+            close(fd);
+            return false;
+        }
     }
-    return static_cast<bool>(out);
-}
 
+    close(fd);
+    return true;
+}

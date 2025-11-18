@@ -24,7 +24,7 @@ bool threadCompress(const fs::path &inputFile, fs::path &outputFile, int threadI
 
     // Generar nombre único para la tabla de frecuencias
     fs::path freqDest = inputFile.string() + ".freq";
-    
+
     // Comprimir usando tabla de frecuencias única
     vector<char> compressed = Huffman::HuffmanCompression(fileData, freqDest.string());
 
@@ -59,8 +59,8 @@ bool threadDecompress(const fs::path &inputFile, fs::path &outputFile, int threa
         return false;
 
     auto restored = Huffman::HuffmanDecompression(compressed, freqFile.string());
-    
-    // Si el archivo original era texto.txt.enc.huf (resultado de -ec), 
+
+    // Si el archivo original era texto.txt.enc.huf (resultado de -ec),
     // al descomprimir debería dar texto.txt.enc para luego desencriptar
     string inputStr = inputFile.string();
     if (inputStr.size() > 4 && inputStr.substr(inputStr.size() - 4) == ".huf")
@@ -72,7 +72,7 @@ bool threadDecompress(const fs::path &inputFile, fs::path &outputFile, int threa
     {
         outputFile = inputFile.string() + ".restored";
     }
-    
+
     return Huffman::writeFile(outputFile.string(), restored);
 }
 
@@ -94,7 +94,7 @@ bool threadDecrypt(const fs::path &inputFile, fs::path &outputFile, const string
         return false;
 
     vector<char> decrypted = Vigenere::VigenereDecryption(encrypted, key);
-    
+
     // Si el archivo termina en .enc, quitarlo para obtener el nombre original
     string inputStr = inputFile.string();
     if (inputStr.size() > 4 && inputStr.substr(inputStr.size() - 4) == ".enc")
@@ -106,7 +106,7 @@ bool threadDecrypt(const fs::path &inputFile, fs::path &outputFile, const string
     {
         outputFile = inputFile.string() + ".dec";
     }
-    
+
     return Huffman::writeFile(outputFile.string(), decrypted);
 }
 
@@ -329,8 +329,8 @@ bool validateOperations(const vector<string> &operations, string &errorMsg)
         if (current == "c" && (next == "e" || next == "z"))
         {
             errorMsg = "ERROR: No se puede encriptar/desencriptar después de comprimir.\n"
-                      "       El cifrado Vigenere solo funciona con texto, no con datos binarios.\n"
-                      "       Use -ec (encriptar y luego comprimir) en lugar de -ce";
+                       "       El cifrado Vigenere solo funciona con texto, no con datos binarios.\n"
+                       "       Use -ec (encriptar y luego comprimir) en lugar de -ce";
             return false;
         }
 
@@ -338,7 +338,7 @@ bool validateOperations(const vector<string> &operations, string &errorMsg)
         if (current == "d" && (next == "c" || next == "e"))
         {
             errorMsg = "ERROR: No se puede comprimir/encriptar después de descomprimir.\n"
-                      "       La descompresión debe ser seguida de desencriptación (-dz) o ser final.";
+                       "       La descompresión debe ser seguida de desencriptación (-dz) o ser final.";
             return false;
         }
 
@@ -831,7 +831,7 @@ int main(int argc, char **argv)
         if (fs::is_regular_file(input))
         {
             cout << "Procesando archivo: " << input << endl;
-            
+
             // Crear thread data
             ThreadData data;
             data.file = input;
